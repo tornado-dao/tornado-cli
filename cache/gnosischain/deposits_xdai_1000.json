@@ -3988,5 +3988,11 @@
     "commitment": "0x12ed71dfaf7e83161bb5ad1c29a7ff4d92b5fd053c64d8c61875ef6673ed3a1d",
     "leafIndex": 569,
     "timestamp": 1734726170
+  },
+  {
+    "blockNumber": 43704549,
+    "transactionHash": "0x64dcf8e9e64cfee656d49c9a9e0c9b670e9252c815135b454133ce659c31675c",
+    "commitment": "0x0f80d6cc52600ad7ddbfc9921c2ceb62531ed3be6c9ff440f8fac69e38c029cf",
+    "leafIndex": 570
   }
 ]

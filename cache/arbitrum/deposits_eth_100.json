@@ -292,5 +292,17 @@
     "commitment": "0x05549d79afde306e5023328b05fa191b4f693dd00b3778b5e121c9acceeac0d2",
     "leafIndex": 41,
     "timestamp": 1728534213
+  },
+  {
+    "blockNumber": 372624571,
+    "transactionHash": "0x60942ca3948367e697e7c55faaba633b7a4ec942767f1b8fc228b8905a3dda31",
+    "commitment": "0x0a4688db91079d083cd02c166b03fcbd42c74798a7fddac302d254b072727660",
+    "leafIndex": 42
+  },
+  {
+    "blockNumber": 372628302,
+    "transactionHash": "0x71816c70453414160fee0397fe3e7fa6ca651f330e8b916308f54e0208f6b5f7",
+    "commitment": "0x0cf2d4d495dad8a5a1b34beee9d28862669781beee86f1ea78a059c9dcc665b3",
+    "leafIndex": 43
   }
 ]

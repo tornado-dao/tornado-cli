@@ -1426,7 +1426,7 @@ async function fetchEvents({ type, currency, amount }) {
   const updatedEvents = loadCachedEvents({ type, currency, amount })
   const updatedBlock = updatedEvents[updatedEvents.length - 1].blockNumber;
   console.log('Cache updated for Tornado', type === 'relayer' ? type : `${amount} ${currency.toUpperCase()} instance to block`, updatedBlock, 'successfully');
-  console.log(`Total ${type}s:`, updatedEvents.length - 1);
+  console.log(`Total ${type}s:`, updatedEvents.length);
   return updatedEvents;
 }
 
