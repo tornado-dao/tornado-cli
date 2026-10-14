@@ -6,7 +6,7 @@ Command line tool to interact with [Tornado Cash protocol](https://docs.tornadoc
 
 ##### Simple installation for Windows users:
 
-Download archive file from this git: https://codeberg.org/torndao/tornado-cli/archive/master.zip
+Download archive file from this git: https://github.com/tornado-dao/tornado-cli/archive/refs/heads/master.zip
 
 Extract it and you can run CLI executable file (but don't move it from this directory): `tornado-cli.exe -h`
 
@@ -25,10 +25,10 @@ You also need to install C++ build tools in order to do 'npm install', for more 
 If you have git installed on your system, clone the master branch.
 
 ```bash
-$ git clone https://codeberg.org/torndao/tornado-cli
+$ git clone https://github.com/tornado-dao/tornado-cli.git
 ```
 
-Or, download the archive file from git: https://codeberg.org/torndao/tornado-cli/archive/master.zip
+Or, download the archive file from git: https://github.com/tornado-dao/tornado-cli/archive/refs/heads/master.zip
 
 After downloading or cloning the repository, you must install necessary libraries using the following command.
 

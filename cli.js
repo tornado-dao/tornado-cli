@@ -547,10 +547,11 @@ async function withdraw({ deposit, currency, amount, recipient, relayerURL, refu
     throw new Error('Recipient address is not valid');
   }
 
-  const depositInfo = await loadDepositData({ amount, currency, deposit });
-  const allDeposits = loadCachedEvents({ type: "deposit", currency, amount });
-  if ((depositInfo.leafIndex > allDeposits[allDeposits.length - 1].leafIndex - 10)
-    && allDeposits.length > 10) {
+  const allDeposits = loadCachedEvents({ type: 'deposit', currency, amount });
+  const depositEvent = allDeposits.find((e) => e.commitment === deposit.commitmentHex);
+  if (!depositEvent) throw new Error('Deposit not found in cache, run syncEvents first.');
+
+  if (depositEvent.leafIndex > allDeposits[allDeposits.length - 1].leafIndex - 10 && allDeposits.length > 10) {
     console.log("\nWARNING: you're trying to withdraw your deposit too early, there are not enough subsequent deposits to ensure good anonymity level. Read: https://docs.tornado.ws/general/guides/opsec.html");
     if (shouldPromptConfirmation)
       await promptConfirmation("Continue withdrawal with risks to anonymity? [Y/n]: ")
