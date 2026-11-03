@@ -949,8 +949,8 @@ function getCurrentNetworkName() {
 
 /**
  * Get native currency symbol for selected chain
- * @param {number | string} chainId 
- * @returns {string} 
+ * @param {number | string} chainId
+ * @returns {string}
  */
 function getCurrentNetworkSymbol(chainId) {
   switch (Number(chainId)) {
@@ -994,7 +994,7 @@ async function waitForTxReceipt({ txHash, attempts = 60, delay = 1000 }) {
  * Select one of default RPCs that works correctly
  * @param {number | string} chainId
  * @param {EventType} eventType Possible type of events in Tornado: deposit, withdrawal or fetch relayers
- * @param {boolean} [isSubgraphAvailable=false] If subgraph for required user action is already available, we can lower requirements for RPC (for example, 
+ * @param {boolean} [isSubgraphAvailable=false] If subgraph for required user action is already available, we can lower requirements for RPC (for example,
  * if we can fetch all deposit events from subgraph, we shouldn't require archive node)
  * @returns {Promise<string>} Full RPC link
  */
@@ -1013,13 +1013,20 @@ async function selectDefaultRpc(chainId, eventType, isSubgraphAvailable = false)
 
         if (registeredRelayers.length > 0) {
           const relayerAggregatorContract = new localWeb3.Contract(relayerAggregatorAbi, relayerAggregatorAddress);
-          const relayerNameHashes = registeredRelayers.map(r => r.ensHash);
-          // Here it checks RPC returndata size limit: when getRelayer function aggregates onchain data for all relayers, returndata size will be big
-          await relayerAggregatorContract.methods.relayersData(relayerNameHashes, relayerSubdomains).call();
+
+          const testHashes = registeredRelayers.slice(0, 3).map(r => r.ensHash);
+
+          try {
+            await relayerAggregatorContract.methods.relayersData(testHashes, relayerSubdomains).call({ gas: 30000000 });
+          } catch (e) {
+            throw new Error("RPC cannot handle relayersData call");
+          }
         }
 
         const lastBlock = await localWeb3.getBlockNumber();
-        const lastCachedBlock = registeredRelayers.length > 0 ? registeredRelayers[registeredRelayers.length - 1].blockNumber : relayerRegistryDeployedBlockNumber;
+        const lastCachedBlock = registeredRelayers.length > 0
+          ? registeredRelayers[registeredRelayers.length - 1].blockNumber
+          : relayerRegistryDeployedBlockNumber;
         const fromBlock = isSubgraphAvailable ? lastBlock - 1000 : lastCachedBlock;
         const toBlock = isSubgraphAvailable ? lastBlock : lastCachedBlock + 1000;
         await relayerRegistryContract.getPastEvents("RelayerRegistered", { fromBlock, toBlock });
@@ -1085,7 +1092,7 @@ async function selectDefaultGraph(chainId, eventType) {
 
 /**
  * Get available relayers data for selected chain
- * @param {string | number} chainId 
+ * @param {string | number} chainId
  * @returns {Promise<Array<Object>>} List of available relayers
  */
 async function getRelayers(chainId) {
@@ -1124,34 +1131,164 @@ async function getRelayers(chainId) {
 
   async function getValidRelayers(relayers, ensSubdomainKey) {
     const relayerNameHashes = relayers.map((r) => r.ensHash);
-    const relayersData = await aggregator.methods.relayersData(relayerNameHashes, relayerSubdomains).call();
-    const validRelayers = relayersData.reduce(
-      (acc, curr, index) => filterRelayers(acc, curr, ensSubdomainKey, relayers[index]),
-      []
-    );
-    return validRelayers;
-  }
 
-  async function getAvailableRelayersData(relayers) {
-    let statuses = [];
-    for (const relayer of relayers) {
+    // Deduplicate and record original indexes
+    const uniqueMap = new Map(); // hash -> [original indexes]
+    relayerNameHashes.forEach((hash, index) => {
+      if (!uniqueMap.has(hash)) uniqueMap.set(hash, []);
+      uniqueMap.get(hash).push(index);
+    });
+    const uniqueHashes = Array.from(uniqueMap.keys());
+
+    const allRelayersData = new Array(relayerNameHashes.length);
+
+    async function safeCall(hashes) {
+      if (hashes.length === 0) return [];
+
       try {
-        const res = await axios.get(`https://${relayer.hostname}/status`, globals.requestOptions);
-        const statusData = res.data;
-        if (statusData.rewardAccount && statusData.health.status == 'true') {
-          statuses.push({
-            ...relayer,
-            ...statusData
-          });
+        const data = await aggregator.methods
+          .relayersData(hashes, relayerSubdomains)
+          .call({ gas: 30000000 });
+        return data;
+      } catch (err) {
+        if (hashes.length === 1) {
+          console.warn(`Single hash failed, skipping: ${hashes[0]}`);
+          return [null];
         }
-      } catch (e) {
-        // console.error(`Failed to fetch status for ${relayer.hostname}:`);
+        console.warn(`Batch failed (${hashes.length} items), splitting into smaller batches...`);
+        const mid = Math.ceil(hashes.length / 2);
+        const left = await safeCall(hashes.slice(0, mid));
+        const right = await safeCall(hashes.slice(mid));
+        return [...left, ...right];
       }
     }
 
-    return statuses;
-  }
+    const BATCH_SIZE = 4;
+    for (let i = 0; i < uniqueHashes.length; i += BATCH_SIZE) {
+      const batchHashes = uniqueHashes.slice(i, i + BATCH_SIZE);
+      console.log(`Processing batch starting at index ${i}, size ${batchHashes.length}`);
 
+      const batchData = await safeCall(batchHashes);
+
+      batchHashes.forEach((hash, batchIdx) => {
+        const originalIndexes = uniqueMap.get(hash);
+        originalIndexes.forEach((origIdx) => {
+          allRelayersData[origIdx] = batchData[batchIdx];
+        });
+      });
+    }
+
+    // ========== 调试统计 ==========
+    let successCount = 0;
+    let nullCount = 0;
+    let filteredOutCount = 0;
+
+    const validRelayers = allRelayersData.reduce((acc, curr, index) => {
+      if (curr === null) {
+        nullCount++;
+        return acc;
+      }
+      successCount++;
+
+      const before = acc.length;
+      const result = filterRelayers(acc, curr, ensSubdomainKey, relayers[index]);
+      if (result.length === before) {
+        filteredOutCount++;
+        // 可选：打印被过滤的原因
+        // console.log('Filtered out:', relayers[index].ensName, {
+        //   isRegistered: curr.isRegistered,
+        //   balance: curr.balance,
+        //   owner: curr.owner,
+        //   records: curr.records
+        // });
+      }
+      return result;
+    }, []);
+
+    console.log('===== Debug Stats =====');
+    console.log('Total relayers:', relayers.length);
+    console.log('Unique hashes:', uniqueHashes.length);
+    console.log('Successful on-chain calls:', successCount);
+    console.log('Failed (null) calls:', nullCount);
+    console.log('Filtered out by filterRelayers:', filteredOutCount);
+    console.log('Final valid relayers:', validRelayers.length);
+    console.log('=======================');
+
+    return validRelayers;
+  }
+  async function getAvailableRelayersData(relayers) {
+    const results = [];
+    const CONCURRENCY = 6;
+    const TIMEOUT_MS = 5000;
+
+    async function checkOne(relayer) {
+      console.log(`  → checking ${relayer.hostname} ...`);
+      let timer;
+      const hardTimeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`HARD_TIMEOUT_${TIMEOUT_MS}ms`)), TIMEOUT_MS);
+        if (timer.unref) timer.unref();
+      });
+
+      try {
+        const res = await Promise.race([
+          axios.get(`https://${relayer.hostname}/status`, {
+            timeout: TIMEOUT_MS,
+            httpsAgent: globals.requestOptions.httpsAgent,
+            httpAgent:  globals.requestOptions.httpAgent,
+            headers:    globals.requestOptions.headers,
+          }),
+          hardTimeout,
+        ]);
+
+        const statusData = res.data || {};
+        const isHealthy =
+          statusData.health &&
+          (statusData.health.status === true ||
+            statusData.health.status === 'true' ||
+            statusData.health.status === 'ok');
+
+        // 关键：rewardAccount 必须与链上 relayerAddress 一致
+        const rewardAccount = (statusData.rewardAccount || '').toLowerCase();
+        const registeredAddress = (relayer.relayerAddress || '').toLowerCase();
+        const addressMatch =
+          rewardAccount &&
+          registeredAddress &&
+          rewardAccount === registeredAddress;
+
+        if (statusData.rewardAccount && isHealthy && addressMatch) {
+          console.log(`✓ Available: ${relayer.hostname}`);
+          return { ...relayer, ...statusData };
+        }
+
+        if (!addressMatch && statusData.rewardAccount) {
+          console.log(`✗ Address mismatch: ${relayer.hostname}`, {
+            rewardAccount: statusData.rewardAccount,
+            relayerAddress: relayer.relayerAddress,
+          });
+        } else {
+          console.log(`✗ Unhealthy: ${relayer.hostname}`, {
+            rewardAccount: !!statusData.rewardAccount,
+            health: statusData.health,
+            addressMatch,
+          });
+        }
+        return null;
+      } catch (e) {
+        console.log(`✗ Failed: ${relayer.hostname} → ${e.code || e.name || e.message}`);
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    for (let i = 0; i < relayers.length; i += CONCURRENCY) {
+      const chunk = relayers.slice(i, i + CONCURRENCY);
+      console.log(`\nChecking relayers ${i + 1}-${i + chunk.length}/${relayers.length}...`);
+      const batch = await Promise.all(chunk.map(checkOne));
+      results.push(...batch.filter(Boolean));
+    }
+    return results;
+  }
   const registeredRelayers = await fetchEvents({ type: "relayer" });
   // Some relayers can be unregistered and then registrered again
   const deduplicatedRelayers = registeredRelayers.filter((relayer, index, relayers) => index === relayers.findIndex(r => relayer.ensName === r.ensName));
@@ -1219,7 +1356,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
  * @param {Object} data Post request data
  * @param {RequestOptions} requestOptions Post request connection options (timeout, proxy)
  * @param {number} retryAttempts Retry attempts count, it limits the maximum number of requests
- * @param {number} waitingTimeIncrease In milliseconds. The waiting time is increased before each new attempt, (this value) * (current retry attempt number) 
+ * @param {number} waitingTimeIncrease In milliseconds. The waiting time is increased before each new attempt, (this value) * (current retry attempt number)
  * @returns {Promise<any>} Axios reonse
  */
 async function retryPostRequest(url, data, requestOptions, retryAttempts, waitingTimeIncrease = 2000) {
@@ -1268,7 +1405,7 @@ function loadCachedEvents({ type, currency, amount }) {
 
 /**
  * Update cache for events of selected type (currency and amount also, if applicable) to actual blockchain state
- * @param {Object} args 
+ * @param {Object} args
  * @param {EventType} args.type Events type
  * @param {string} [args.currency] Currency to select Tornado pool instance from which it should fetch events (for deposits and withdrawals)
  * @param {number} [args.amount] Amount to select Tornado pool instance from which it should fetch events (for deposits and withdrawals)
@@ -1598,7 +1735,7 @@ async function undelegate() {
 
 /**
  * Loads actual data from contract and prints information about Tornado Cash staking for specified address: stake amount, unclaimed staking rewards and voting power delegation
- * @param {string} address 
+ * @param {string} address
  */
 async function printStakeInfo(address) {
   if (!web3Utils.isAddress(address)) throw new Error("Cannot check stake info: invalid address provided");
